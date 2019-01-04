@@ -323,9 +323,11 @@ namespace Jack
                 snd_pcm_hw_params_get_access ( params, &fSampleAccess );
 
                 //search for 32-bits or 16-bits format
-                if ( snd_pcm_hw_params_set_format ( stream, params, SND_PCM_FORMAT_S32 ) )
-                    check_error_msg ( snd_pcm_hw_params_set_format ( stream, params, SND_PCM_FORMAT_S16 ),
-                                      "unable to set format to either 32-bits or 16-bits" );
+                check_error_msg ((snd_pcm_hw_params_set_format ( stream, params, SND_PCM_FORMAT_S32 ) != 0) &&
+                                 (snd_pcm_hw_params_set_format ( stream, params, SND_PCM_FORMAT_S24_3LE ) != 0) &&
+                                 (snd_pcm_hw_params_set_format ( stream, params, SND_PCM_FORMAT_S24 ) != 0) &&
+                                 (snd_pcm_hw_params_set_format ( stream, params, SND_PCM_FORMAT_S16 ) != 0),
+                                 "unable to set format to either 32-bits, 24-bit or 16-bits" );
                 snd_pcm_hw_params_get_format ( params, &fSampleFormat );
 
                 //set sample frequency
@@ -384,6 +386,31 @@ namespace Jack
                                 for ( c = 0; c < fCardInputs; c++ )
                                     fInputSoftChannels[c][s] = jack_default_audio_sample_t(buffer16b[c + s*fCardInputs]) * (jack_default_audio_sample_t(1.0)/jack_default_audio_sample_t(SHRT_MAX));
                         }
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24_3LE ) {
+                            int8_t* buffer24b = ( int8_t* ) fInputCardBuffer;
+                            for ( s = 0; s < fBuffering; s++ )
+                               for ( c = 0; c < fCardInputs; c++ ) {
+                                  int32_t d = (buffer24b[2] & 0xFF);
+                                  d <<= 8;
+                                  d += (buffer24b[1] & 0xFF);
+                                  d <<= 8;
+                                  d += (buffer24b[0] & 0xFF);
+
+                                  if (buffer24b[2] & 0x80) {
+                                     d |= 0xff << 24;
+                                  }
+
+                                  buffer24b+=3;
+
+                                  fInputSoftChannels[c][s] = jack_default_audio_sample_t(d) * (jack_default_audio_sample_t(1.0)/jack_default_audio_sample_t( 0x007fffff));
+                               }
+                        }
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24 ) {
+                            int32_t* buffer24b = ( int32_t* ) fInputCardBuffer;
+                            for ( s = 0; s < fBuffering; s++ )
+                                for ( c = 0; c < fCardInputs; c++ )
+                                   fInputSoftChannels[c][s] = jack_default_audio_sample_t(buffer24b[c + s*fCardInputs]) * (jack_default_audio_sample_t(1.0)/jack_default_audio_sample_t( 0x7fffff00));
+                        }
                         else   // SND_PCM_FORMAT_S32
                         {
                             int32_t* buffer32b = ( int32_t* ) fInputCardBuffer;
@@ -407,6 +434,37 @@ namespace Jack
                                 chan16b = ( short* ) fInputCardChannels[c];
                                 for ( s = 0; s < fBuffering; s++ )
                                     fInputSoftChannels[c][s] = jack_default_audio_sample_t(chan16b[s]) * (jack_default_audio_sample_t(1.0)/jack_default_audio_sample_t(SHRT_MAX));
+                            }
+                        }
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24_3LE ) {
+                            int8_t* chan24b;
+                            for ( c = 0; c < fCardInputs; c++ )
+                            {
+                               chan24b = ( int8_t* ) fInputCardChannels[c];
+                               for ( s = 0; s < fBuffering; s++ ) {
+                                  int32_t d = (chan24b[2] & 0xFF);
+                                  d <<= 8;
+                                  d += (chan24b[1] & 0xFF);
+                                  d <<= 8;
+                                  d += (chan24b[0] & 0xFF);
+
+                                  if (chan24b[2] & 0x80) {
+                                     d |= 0xff << 24;
+                                  }
+
+                                  chan24b+=3;
+       
+                                  fInputSoftChannels[c][s] = jack_default_audio_sample_t(d) * (jack_default_audio_sample_t(1.0)/jack_default_audio_sample_t(0x007fffff));
+                               }
+                            }
+                        }
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24 ) {
+                            int32_t* chan32b;
+                            for ( c = 0; c < fCardInputs; c++ )
+                            {
+                                chan32b = ( int32_t* ) fInputCardChannels[c];
+                                for ( s = 0; s < fBuffering; s++ )
+                                    fInputSoftChannels[c][s] = jack_default_audio_sample_t(chan32b[s]) * (jack_default_audio_sample_t(1.0)/jack_default_audio_sample_t(0x7fffff00));
                             }
                         }
                         else   // SND_PCM_FORMAT_S32
@@ -451,6 +509,31 @@ namespace Jack
                                 }
                             }
                         }
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24_3LE ) {
+                            int8_t* buffer24b = ( int8_t* ) fOutputCardBuffer;
+                            for ( f = 0; f < fBuffering; f++ )
+                            {
+                                for ( unsigned int c = 0; c < fCardOutputs; c++ )
+                                {
+                                    jack_default_audio_sample_t x = fOutputSoftChannels[c][f];
+                                    int d = int32_t(max(min(x, jack_default_audio_sample_t(1.0)), jack_default_audio_sample_t(-1.0)) * jack_default_audio_sample_t(0x007fffff));
+                                    *buffer24b++ = d;
+                                    *buffer24b++ = d >> 8;
+                                    *buffer24b++ = d >> 16;
+                                }
+                            }
+                        }
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24 ) {
+                            int32_t* buffer32b = ( int32_t* ) fOutputCardBuffer;
+                            for ( f = 0; f < fBuffering; f++ )
+                            {
+                                for ( unsigned int c = 0; c < fCardOutputs; c++ )
+                                {
+                                    jack_default_audio_sample_t x = fOutputSoftChannels[c][f];
+                                    buffer32b[c + f * fCardOutputs] = int32_t(max(min(x, jack_default_audio_sample_t(1.0)), jack_default_audio_sample_t(-1.0)) * jack_default_audio_sample_t(0x007fffff)) << 8;
+                                }
+                            }
+                        }
                         else   // SND_PCM_FORMAT_S32
                         {
                             int32_t* buffer32b = ( int32_t* ) fOutputCardBuffer;
@@ -485,7 +568,32 @@ namespace Jack
                                 }
                             }
                         }
-                        else
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24_3LE ) {
+                            for ( c = 0; c < fCardOutputs; c++ )
+                            {
+                                int8_t* chan24b = ( int8_t* ) fOutputCardChannels[c];
+                                for ( f = 0; f < fBuffering; f++ )
+                                {
+                                    jack_default_audio_sample_t x = fOutputSoftChannels[c][f];
+                                    int d = int32_t(max(min(x, jack_default_audio_sample_t(1.0)), jack_default_audio_sample_t(-1.0)) * jack_default_audio_sample_t(0x007fffff));
+                                    *chan24b++ = d;
+                                    *chan24b++ = d >> 8;
+                                    *chan24b++ = d >> 16;
+                                }
+                            }
+                        }
+                        else if ( fSampleFormat == SND_PCM_FORMAT_S24 ) {
+                            for ( c = 0; c < fCardOutputs; c++ )
+                            {
+                                int32_t* chan32b = ( int32_t* ) fOutputCardChannels[c];
+                                for ( f = 0; f < fBuffering; f++ )
+                                {
+                                    jack_default_audio_sample_t x = fOutputSoftChannels[c][f];
+                                    chan32b[f] = int32_t(max(min(x, jack_default_audio_sample_t(1.0)), jack_default_audio_sample_t(-1.0)) * jack_default_audio_sample_t(0x007fffff));
+                                }
+                            }
+                        }
+                        else   // SND_PCM_FORMAT_S32
                         {
                             for ( c = 0; c < fCardOutputs; c++ )
                             {
